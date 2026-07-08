@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""SuperYT - Descargador local de videos de YouTube (videos individuales o listas)."""
+"""SuperYT - Descargador local de videos de YouTube y Odysee (videos individuales o listas)."""
 
 import os
 import re
@@ -42,7 +42,7 @@ class Cancelado(Exception):
 class SuperYT(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("SuperYT - Descargador de YouTube")
+        self.title("SuperYT - Descargador de YouTube y Odysee")
         self.geometry("760x600")
         self.minsize(620, 500)
 
@@ -57,7 +57,7 @@ class SuperYT(tk.Tk):
         cont = ttk.Frame(self, padding=12)
         cont.pack(fill="both", expand=True)
 
-        ttk.Label(cont, text="Pegá las URLs de YouTube (videos o listas de reproducción), una por línea:").pack(anchor="w")
+        ttk.Label(cont, text="Pegá las URLs de YouTube u Odysee (videos o listas de reproducción), una por línea:").pack(anchor="w")
 
         self.txt_urls = tk.Text(cont, height=6, wrap="none")
         self.txt_urls.pack(fill="x", pady=(4, 10))
@@ -120,7 +120,7 @@ class SuperYT(tk.Tk):
             return
         urls = [u.strip() for u in self.txt_urls.get("1.0", "end").splitlines() if u.strip()]
         if not urls:
-            messagebox.showwarning("SuperYT", "Pegá al menos una URL de YouTube.")
+            messagebox.showwarning("SuperYT", "Pegá al menos una URL de YouTube u Odysee.")
             return
         carpeta = self.var_carpeta.get().strip() or CARPETA_DEFECTO
         os.makedirs(carpeta, exist_ok=True)

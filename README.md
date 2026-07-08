@@ -1,6 +1,6 @@
-# SuperYT — Descargador local de YouTube
+# SuperYT — Descargador local de YouTube y Odysee
 
-Aplicación de escritorio para descargar videos de YouTube en la mejor calidad disponible.
+Aplicación de escritorio para descargar videos de YouTube u Odysee en la mejor calidad disponible.
 Soporta videos individuales y listas de reproducción completas (en lotes).
 
 ## Primeros pasos (solo una vez)
@@ -30,9 +30,11 @@ python app.py
 
 ## Cómo usarla
 
-1. Pegá una o varias URLs de YouTube en el cuadro de texto, **una por línea**.
-   - Puede ser un video: `https://www.youtube.com/watch?v=...`
-   - O una lista completa: `https://www.youtube.com/playlist?list=...`
+1. Pegá una o varias URLs de YouTube u Odysee en el cuadro de texto, **una por línea**.
+   - Video de YouTube: `https://www.youtube.com/watch?v=...`
+   - Lista de YouTube: `https://www.youtube.com/playlist?list=...`
+   - Video de Odysee: `https://odysee.com/@canal/nombre-del-video`
+   - Canal de Odysee (se trata como lista): `https://odysee.com/@canal`
 2. Elegí la carpeta de destino (por defecto: `Descargas\SuperYT`).
 3. Elegí el modo:
    - **Mejor calidad (video + audio)**: descarga la máxima resolución disponible (4K si existe).
