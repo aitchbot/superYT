@@ -51,9 +51,10 @@ falla, la descarga continúa con el resto.
 
 ## Notas
 
-- Para lograr la máxima calidad, algunos videos se guardan como `.mkv` o `.webm`
-  (YouTube publica las resoluciones altas en esos formatos). Windows 11 los
-  reproduce nativamente, igual que VLC.
+- En modo "Mejor calidad" los videos siempre se guardan en `.mkv`, sea cual sea el
+  formato original, para no perder la resolución máxima (YouTube suele publicarla
+  en contenedores que no todos los reproductores reconocen bien). Windows 11 y VLC
+  reproducen `.mkv` sin problema.
 - Si YouTube cambia algo y las descargas empiezan a fallar, actualizá yt-dlp:
   ```
   python -m pip install --upgrade yt-dlp

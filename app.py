@@ -210,6 +210,7 @@ class SuperYT(tk.Tk):
             })
         else:
             opciones["format"] = "bestvideo+bestaudio/best"
+            opciones["postprocessors"] = [{"key": "FFmpegVideoRemuxer", "preferedformat": "mkv"}]
 
         try:
             for i, url in enumerate(urls, 1):
