@@ -43,7 +43,12 @@ python app.py
    antes de descargar una lista, se abre una ventana con todos sus videos para que
    marques cuáles querés (con botones *Todos* / *Ninguno*, o podés omitir la lista entera).
    Si la casilla está desmarcada, se baja la lista completa.
-5. Presioná **Descargar**.
+5. (Opcional, solo en modo video) Marcá **"Bajar subtítulos en español si están
+   disponibles"**: si el video tiene subtítulos en español (manuales o automáticos),
+   quedan incrustados en el `.mkv` (los ve cualquier reproductor, en el menú de
+   subtítulos) y además se guarda el archivo `.srt` aparte. Si el video no tiene
+   subtítulos en español, simplemente no se agrega nada.
+6. Presioná **Descargar**.
 
 Las listas de reproducción se guardan en una subcarpeta con el nombre de la lista,
 con los videos numerados según su posición en la lista. Si un video de la lista

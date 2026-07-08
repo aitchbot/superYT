@@ -87,6 +87,15 @@ class SuperYT(tk.Tk):
             variable=self.var_elegir,
         ).pack(side="left")
 
+        fila_subs = ttk.Frame(cont)
+        fila_subs.pack(fill="x", pady=(0, 10))
+        self.var_subtitulos = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            fila_subs,
+            text="Bajar subtítulos en español si están disponibles (se incrustan en el video)",
+            variable=self.var_subtitulos,
+        ).pack(side="left")
+
         fila_btn = ttk.Frame(cont)
         fila_btn.pack(fill="x", pady=(0, 10))
         self.btn_descargar = ttk.Button(fila_btn, text="⬇  Descargar", command=self._iniciar)
@@ -150,14 +159,14 @@ class SuperYT(tk.Tk):
 
         hilo = threading.Thread(
             target=self._descargar,
-            args=(urls, carpeta, self.var_modo.get(), self.var_elegir.get()),
+            args=(urls, carpeta, self.var_modo.get(), self.var_elegir.get(), self.var_subtitulos.get()),
             daemon=True,
         )
         hilo.start()
 
     # ---------- lógica de descarga (corre en hilo aparte) ----------
 
-    def _descargar(self, urls, carpeta, modo, elegir):
+    def _descargar(self, urls, carpeta, modo, elegir, subtitulos):
         def hook(d):
             if self.cancelar:
                 raise Cancelado()
@@ -211,6 +220,12 @@ class SuperYT(tk.Tk):
         else:
             opciones["format"] = "bestvideo+bestaudio/best"
             opciones["postprocessors"] = [{"key": "FFmpegVideoRemuxer", "preferedformat": "mkv"}]
+            if subtitulos:
+                opciones["writesubtitles"] = True
+                opciones["writeautomaticsub"] = True
+                opciones["subtitleslangs"] = ["es", "es-419", "es-ES", "es-MX", "es-AR"]
+                opciones["subtitlesformat"] = "srt/best"
+                opciones["postprocessors"].append({"key": "FFmpegEmbedSubtitle", "already_have_subtitle": True})
 
         try:
             for i, url in enumerate(urls, 1):
