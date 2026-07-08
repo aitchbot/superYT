@@ -61,12 +61,15 @@ class SuperYT(tk.Tk):
 
         self.txt_urls = tk.Text(cont, height=6, wrap="none")
         self.txt_urls.pack(fill="x", pady=(4, 10))
+        self._agregar_menu_contextual(self.txt_urls)
 
         fila_carpeta = ttk.Frame(cont)
         fila_carpeta.pack(fill="x", pady=(0, 10))
         ttk.Label(fila_carpeta, text="Guardar en:").pack(side="left")
         self.var_carpeta = tk.StringVar(value=CARPETA_DEFECTO)
-        ttk.Entry(fila_carpeta, textvariable=self.var_carpeta).pack(side="left", fill="x", expand=True, padx=6)
+        entrada_carpeta = ttk.Entry(fila_carpeta, textvariable=self.var_carpeta)
+        entrada_carpeta.pack(side="left", fill="x", expand=True, padx=6)
+        self._agregar_menu_contextual(entrada_carpeta)
         ttk.Button(fila_carpeta, text="Elegir...", command=self._elegir_carpeta).pack(side="left")
 
         fila_ops = ttk.Frame(cont)
@@ -105,6 +108,20 @@ class SuperYT(tk.Tk):
         self.txt_log.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
         self.txt_log.pack(side="left", fill="both", expand=True)
+
+    @staticmethod
+    def _agregar_menu_contextual(widget):
+        """Agrega Cortar/Copiar/Pegar/Seleccionar todo al clic derecho (Tkinter no lo trae por defecto)."""
+        menu = tk.Menu(widget, tearoff=0)
+        menu.add_command(label="Cortar", command=lambda: widget.event_generate("<<Cut>>"))
+        menu.add_command(label="Copiar", command=lambda: widget.event_generate("<<Copy>>"))
+        menu.add_command(label="Pegar", command=lambda: widget.event_generate("<<Paste>>"))
+        menu.add_separator()
+        if isinstance(widget, tk.Text):
+            menu.add_command(label="Seleccionar todo", command=lambda: widget.tag_add("sel", "1.0", "end"))
+        else:
+            menu.add_command(label="Seleccionar todo", command=lambda: widget.select_range(0, "end"))
+        widget.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
 
     def _elegir_carpeta(self):
         carpeta = filedialog.askdirectory(initialdir=self.var_carpeta.get() or os.path.expanduser("~"))
