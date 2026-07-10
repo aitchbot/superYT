@@ -42,11 +42,14 @@ python app.py
 4. En modo video, elegí el formato del archivo: **MKV** (recomendado, tildado por defecto)
    o **MP4**. Sea cual sea el formato original del video, se convierte (remux, sin perder
    calidad) al que elijas.
-5. (Opcional) Marcá **"Elegir qué videos bajar de cada lista de reproducción"**:
+5. En modo video, elegí la **calidad**: **Alta** (la mejor disponible, hasta 4K si existe;
+   por defecto), **Media** (hasta 720p) o **Baja** (hasta 480p) — útil para bajar más
+   rápido o si el espacio en disco es limitado.
+6. (Opcional) Marcá **"Elegir qué videos bajar de cada lista de reproducción"**:
    antes de descargar una lista, se abre una ventana con todos sus videos para que
    marques cuáles querés (con botones *Todos* / *Ninguno*, o podés omitir la lista entera).
    Si la casilla está desmarcada, se baja la lista completa.
-6. (Opcional, solo en modo video) Elegí qué hacer con los **subtítulos en español**:
+7. (Opcional, solo en modo video) Elegí qué hacer con los **subtítulos en español**:
    - **No bajar**: no hace nada (por defecto).
    - **Como archivo .srt aparte**: se guarda el `.srt` en la misma carpeta, sin tocar el video.
    - **Quemados en el video**: el texto queda dibujado directamente sobre la imagen,
@@ -58,7 +61,7 @@ python app.py
    automáticos) se usan esos; si **no** tiene español pero sí inglés, SuperYT los traduce
    automáticamente (usando Google Translate por detrás); si no tiene ninguno de los dos
    idiomas, se descarga el video normalmente y no se agrega nada.
-7. Presioná **Descargar**.
+8. Presioná **Descargar**.
 
 Las listas de reproducción se guardan en una subcarpeta con el nombre de la lista,
 con los videos numerados según su posición en la lista. Si un video de la lista
