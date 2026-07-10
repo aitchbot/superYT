@@ -1,2 +1,5 @@
 yt-dlp
 imageio-ffmpeg
+deep-translator
+srt
+yt-dlp-ejs

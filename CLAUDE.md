@@ -66,6 +66,39 @@ just installed Deno via `winget` won't see it on PATH until a new shell/session 
 alone can't be trusted right after install. This same lookup is duplicated in `_descargar` and
 `_info_lista`, both passing `js_runtimes` to `YoutubeDL`.
 
+A JS runtime alone isn't enough, though: yt-dlp also needs the actual challenge-solving script
+(EJS). Rather than passing `--remote-components ejs:github`/`ejs:npm` (which makes yt-dlp fetch
+and run arbitrary code from the internet at download time — not something to enable silently in
+an app handed to non-technical users), the `yt-dlp-ejs` PyPI package is a `requirements.txt`
+dependency instead, so the solver ships locally with a known, pinned version.
+
+**Subtitle handling via a custom yt-dlp postprocessor.** yt-dlp can download subtitles but can't
+translate or burn them in, and there's no way to conditionally pick "Spanish if present, else
+translated English" using yt-dlp's declarative `postprocessors` option list alone (subtitle files
+land on disk before any `post_process`-stage postprocessor runs, but you can't inspect/rewrite
+them from there without a custom class). `_TraductorSubtitulosPP` (subclasses yt-dlp's
+`PostProcessor`) is registered via `ydl.add_post_processor(..., when="post_process")` *after*
+the instance is created, so it runs after the declarative `FFmpegVideoRemuxer` entry (which was
+registered earlier, during `YoutubeDL.__init__` from the `postprocessors` option) — this ordering
+is what guarantees translation/burning happens on the already-remuxed final container. Its
+`run()` picks one subtitle language to keep (prefers anything in `IDIOMAS_ES`; otherwise
+translates the first `IDIOMAS_EN` match via `_traducir_srt` and synthesizes an `"es"` entry),
+deletes every other downloaded subtitle file, then either leaves the `.srt` on disk as-is
+(`modo == "srt"`) or burns it into the video pixels via its own `subprocess` call to ffmpeg's
+`subtitles` filter (`modo == "hardsub"`, re-encodes with `libx264` since burning requires
+pixel-level compositing — can't be a stream copy like the rest of the pipeline). There is
+deliberately no "soft-embed as a selectable track" option: the user was offered that choice and
+picked exactly two outcomes (plain `.srt` file, or permanently burned-in), so don't reintroduce
+`FFmpegEmbedSubtitlePP` without checking that's actually wanted. `_traducir_srt` batches cues into
+one translation call per ~3500 characters (falls back to per-cue translation if a batch comes
+back misaligned) to avoid one network round-trip per subtitle line.
+
+**Subtitle language codes are an intentional allowlist, not a regex.** `IDIOMAS_ES`/`IDIOMAS_EN`
+list exact codes (`es`, `es-419`, `es-ES`, ...) instead of a `"es.*"` pattern. YouTube's automatic
+captions expose a chain-translation matrix where e.g. `es-ar` means "Spanish translated from
+Arabic" — a broad regex would match and embed several redundant/lower-quality auto-translated
+tracks alongside the real one.
+
 ## Installer scripts
 
 `Instalar.bat` → `Instalar.ps1` is a separate, idempotent setup flow aimed at non-technical

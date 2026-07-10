@@ -39,16 +39,26 @@ python app.py
 3. Elegí el modo:
    - **Mejor calidad (video + audio)**: descarga la máxima resolución disponible (4K si existe).
    - **Solo audio (MP3)**: extrae únicamente el audio en la mejor calidad.
-4. (Opcional) Marcá **"Elegir qué videos bajar de cada lista de reproducción"**:
+4. En modo video, elegí el formato del archivo: **MKV** (recomendado, tildado por defecto)
+   o **MP4**. Sea cual sea el formato original del video, se convierte (remux, sin perder
+   calidad) al que elijas.
+5. (Opcional) Marcá **"Elegir qué videos bajar de cada lista de reproducción"**:
    antes de descargar una lista, se abre una ventana con todos sus videos para que
    marques cuáles querés (con botones *Todos* / *Ninguno*, o podés omitir la lista entera).
    Si la casilla está desmarcada, se baja la lista completa.
-5. (Opcional, solo en modo video) Marcá **"Bajar subtítulos en español si están
-   disponibles"**: si el video tiene subtítulos en español (manuales o automáticos),
-   quedan incrustados en el `.mkv` (los ve cualquier reproductor, en el menú de
-   subtítulos) y además se guarda el archivo `.srt` aparte. Si el video no tiene
-   subtítulos en español, simplemente no se agrega nada.
-6. Presioná **Descargar**.
+6. (Opcional, solo en modo video) Elegí qué hacer con los **subtítulos en español**:
+   - **No bajar**: no hace nada (por defecto).
+   - **Como archivo .srt aparte**: se guarda el `.srt` en la misma carpeta, sin tocar el video.
+   - **Quemados en el video**: el texto queda dibujado directamente sobre la imagen,
+     de forma permanente (se ve en cualquier reproductor o dispositivo, pero no se puede
+     apagar ni cambiar de idioma). Como hay que recodificar el video entero, tarda bastante
+     más que las otras opciones.
+
+   En cualquiera de las dos opciones: si el video tiene subtítulos en español (manuales o
+   automáticos) se usan esos; si **no** tiene español pero sí inglés, SuperYT los traduce
+   automáticamente (usando Google Translate por detrás); si no tiene ninguno de los dos
+   idiomas, se descarga el video normalmente y no se agrega nada.
+7. Presioná **Descargar**.
 
 Las listas de reproducción se guardan en una subcarpeta con el nombre de la lista,
 con los videos numerados según su posición en la lista. Si un video de la lista
@@ -56,10 +66,12 @@ falla, la descarga continúa con el resto.
 
 ## Notas
 
-- En modo "Mejor calidad" los videos siempre se guardan en `.mkv`, sea cual sea el
-  formato original, para no perder la resolución máxima (YouTube suele publicarla
-  en contenedores que no todos los reproductores reconocen bien). Windows 11 y VLC
-  reproducen `.mkv` sin problema.
+- La traducción de subtítulos necesita internet (usa un servicio de traducción en línea,
+  gratuito, sin necesidad de cuenta ni clave). Si falla o no hay conexión, la descarga
+  del video sigue igual, simplemente sin subtítulos.
+- YouTube a veces limita momentáneamente cuántos subtítulos se pueden pedir seguidos
+  ("HTTP Error 429"). Si pasa, SuperYT reintenta solo la descarga del subtítulo unas
+  pocas veces antes de rendirse; el video en sí no se ve afectado.
 - Si YouTube cambia algo y las descargas empiezan a fallar, actualizá yt-dlp:
   ```
   python -m pip install --upgrade yt-dlp
@@ -69,7 +81,8 @@ falla, la descarga continúa con el resto.
 
 - **Python 3.12** (si no lo tenías).
 - **yt-dlp** y **ffmpeg** (el motor de descarga y el que une video+audio).
-- **Deno** (un motor de JavaScript que YouTube exige para resolver ciertos videos).
+- **Deno** y **yt-dlp-ejs** (resuelven el desafío de JavaScript que YouTube exige para
+  algunos videos; sin esto, algunas descargas fallan con "This video is not available").
 
 Todo se instala en tu usuario de Windows, sin tocar nada del sistema ni pedir
 permisos de administrador raros.

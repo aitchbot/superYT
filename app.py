@@ -4,16 +4,25 @@
 import os
 import re
 import shutil
+import subprocess
+import tempfile
 import threading
+import time
 import queue
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 import yt_dlp
 import imageio_ffmpeg
+from yt_dlp.postprocessor.common import PostProcessor
+from deep_translator import GoogleTranslator
+import srt as libsrt
 
 CARPETA_DEFECTO = os.path.join(os.path.expanduser("~"), "Downloads", "SuperYT")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
+IDIOMAS_ES = ["es", "es-419", "es-ES", "es-MX", "es-AR"]
+IDIOMAS_EN = ["en", "en-US", "en-GB", "en-orig"]
+SEPARADOR_LINEA = " ¦ "  # reemplaza saltos de linea internos de un subtitulo al armar el lote a traducir
 
 
 def _detectar_deno():
@@ -35,6 +44,190 @@ def _detectar_deno():
     return None
 
 
+def _traducir_srt(ruta_entrada, ruta_salida, cola_msgs):
+    """Traduce un .srt del inglés al español, línea por línea, en lotes para no hacer
+    una request por cada subtítulo. Si un lote sale desalineado, reintenta ese lote
+    subtítulo por subtítulo."""
+    with open(ruta_entrada, encoding="utf-8", errors="ignore") as f:
+        subs = list(libsrt.parse(f.read()))
+    if not subs:
+        return False
+
+    traductor = GoogleTranslator(source="en", target="es")
+    textos = [s.content.replace("\n", SEPARADOR_LINEA) for s in subs]
+    traducidos = [None] * len(textos)
+
+    LOTE_MAX_CARACTERES = 3500
+
+    def traducir_lote(indices, lote):
+        try:
+            partes = traductor.translate("\n".join(lote)).split("\n")
+            if len(partes) != len(lote):
+                raise ValueError("el lote traducido no tiene la misma cantidad de líneas")
+            for i, parte in zip(indices, partes):
+                traducidos[i] = parte
+        except Exception:
+            for i, texto in zip(indices, lote):
+                try:
+                    traducidos[i] = traductor.translate(texto)
+                except Exception:
+                    traducidos[i] = texto  # si falla, se deja el original en inglés
+
+    cola_msgs.put(("log", f"Traduciendo {len(textos)} subtítulos de inglés a español..."))
+    indices_lote, lote, largo = [], [], 0
+    for i, texto in enumerate(textos):
+        if lote and largo + len(texto) > LOTE_MAX_CARACTERES:
+            traducir_lote(indices_lote, lote)
+            indices_lote, lote, largo = [], [], 0
+        indices_lote.append(i)
+        lote.append(texto)
+        largo += len(texto) + 1
+    if lote:
+        traducir_lote(indices_lote, lote)
+
+    for s, traduccion in zip(subs, traducidos):
+        s.content = (traduccion or "").replace(SEPARADOR_LINEA, "\n")
+
+    with open(ruta_salida, "w", encoding="utf-8") as f:
+        f.write(libsrt.compose(subs))
+    return True
+
+
+class _TraductorSubtitulosPP(PostProcessor):
+    """Postprocesador de yt-dlp: se queda solo con el subtítulo en español (traduciendo
+    desde inglés si hace falta) y lo entrega como pidió el usuario: como archivo .srt
+    aparte, o quemado (incrustado en la imagen) en el video ya remuxeado."""
+
+    def __init__(self, cola_msgs, modo):
+        super().__init__(None)
+        self._cola_msgs = cola_msgs
+        self._modo = modo  # "srt" o "hardsub"
+
+    def run(self, info):
+        subs = info.get("requested_subtitles") or {}
+        if not subs:
+            self._cola_msgs.put(("log", "El video no tiene subtítulos en español ni en inglés; se descarga sin subtítulos."))
+            return [], info
+
+        lang_conservar = next((l for l in IDIOMAS_ES if l in subs), None)
+        if lang_conservar is not None:
+            self._cola_msgs.put(("log", f"Subtítulos en español encontrados ({lang_conservar})."))
+
+        if lang_conservar is None:
+            lang_en = next((l for l in IDIOMAS_EN if l in subs), None)
+            if lang_en is not None:
+                ruta_en = subs[lang_en].get("filepath")
+                if ruta_en and os.path.exists(ruta_en):
+                    sin_ext, _srt = os.path.splitext(ruta_en)
+                    sin_lang, _lang = os.path.splitext(sin_ext)
+                    ruta_es = sin_lang + ".es.srt"
+                    try:
+                        _traducir_srt(ruta_en, ruta_es, self._cola_msgs)
+                        subs["es"] = {"ext": "srt", "filepath": ruta_es, "name": "Español (traducido)"}
+                        os.remove(ruta_en)
+                        del subs[lang_en]
+                        lang_conservar = "es"
+                        self._cola_msgs.put(("log", "Subtítulos traducidos."))
+                    except Exception as e:
+                        self._cola_msgs.put(("log", f"⚠ No se pudieron traducir los subtítulos ({e}); se deja el original en inglés."))
+                        lang_conservar = lang_en
+
+        # nos quedamos solo con el idioma elegido; el resto de los subtitulos bajados se descartan
+        for lang in list(subs.keys()):
+            if lang != lang_conservar:
+                ruta = subs[lang].get("filepath")
+                if ruta and os.path.exists(ruta):
+                    os.remove(ruta)
+                del subs[lang]
+
+        if not subs:
+            return [], info
+
+        ruta_srt = subs[lang_conservar].get("filepath")
+        if not ruta_srt or not os.path.exists(ruta_srt):
+            ruta_srt = self._reintentar_descarga_subtitulo(subs[lang_conservar], info)
+        if not ruta_srt or not os.path.exists(ruta_srt):
+            self._cola_msgs.put(("log", "⚠ No se pudo descargar el archivo de subtítulos (probable límite temporal de YouTube); el video queda sin subtítulos."))
+            return [], info
+        if self._modo == "hardsub":
+            self._quemar_subtitulos(info, ruta_srt)
+        else:
+            self._cola_msgs.put(("log", f"Subtítulos guardados como archivo aparte: {os.path.basename(ruta_srt)}"))
+        return [], info
+
+    def _reintentar_descarga_subtitulo(self, sub_info, info, intentos=3, espera_inicial=3):
+        """Si yt-dlp no pudo bajar el subtítulo (típicamente un 429 pasajero de YouTube),
+        reintenta unas pocas veces con espera creciente usando la URL que ya tenemos."""
+        url = sub_info.get("url")
+        if not url:
+            return None
+        sin_ext, _ext = os.path.splitext(info["filepath"])
+        destino = f"{sin_ext}.srt"
+        for intento in range(1, intentos + 1):
+            time.sleep(espera_inicial * intento)
+            self._cola_msgs.put(("log", f"Reintentando descarga de subtítulos ({intento}/{intentos})..."))
+            try:
+                contenido = self._downloader.urlopen(url).read()
+                with open(destino, "wb") as f:
+                    f.write(contenido)
+                return destino
+            except Exception:
+                continue
+        return None
+
+    def _quemar_subtitulos(self, info, ruta_srt):
+        """Recodifica el video con el subtítulo dibujado sobre la imagen (permanente).
+
+        Recodificar todo el video puede tardar varios minutos; reportamos el avance real
+        (leído del propio ffmpeg) para que no parezca que la app se colgó."""
+        ruta_video = info["filepath"]
+        ffmpeg = self._downloader.params.get("ffmpeg_location") or "ffmpeg"
+        ruta_filtro = ruta_srt.replace("\\", "/").replace(":", "\\:")
+        temporal = f"{ruta_video}.quemado{os.path.splitext(ruta_video)[1]}"
+        duracion = info.get("duration") or 0
+
+        self._cola_msgs.put(("log", "Quemando subtítulos en el video (puede tardar varios minutos: se recodifica todo el video)..."))
+
+        # stderr va a un archivo (no a un pipe) para evitar que ffmpeg se bloquee escribiendo
+        # ahi si el buffer se llena mientras nosotros solo leemos stdout (deadlock clasico de subprocess).
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="ignore") as archivo_stderr:
+            proceso = subprocess.Popen(
+                [
+                    ffmpeg, "-y", "-i", ruta_video,
+                    "-vf", f"subtitles='{ruta_filtro}'",
+                    "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+                    "-c:a", "copy",
+                    "-progress", "pipe:1", "-nostats",
+                    temporal,
+                ],
+                stdout=subprocess.PIPE, stderr=archivo_stderr,
+                universal_newlines=True, encoding="utf-8", errors="ignore",
+            )
+            for linea in proceso.stdout:
+                linea = linea.strip()
+                if linea.startswith("out_time=") and duracion:
+                    try:
+                        h, m, s = linea.split("=", 1)[1].split(":")
+                        segundos = int(h) * 3600 + int(m) * 60 + float(s)
+                        pct = max(0.0, min(100.0, segundos / duracion * 100))
+                        self._cola_msgs.put(("progreso", pct, f"Quemando subtítulos... {pct:.0f}%"))
+                    except (ValueError, IndexError):
+                        pass
+            codigo = proceso.wait()
+
+            if codigo != 0:
+                archivo_stderr.seek(0)
+                ultimas_lineas = "\n".join(archivo_stderr.read().strip().splitlines()[-5:])
+                self._cola_msgs.put(("log", f"⚠ No se pudieron quemar los subtítulos (ffmpeg terminó con error); se deja el .srt aparte.\n{ultimas_lineas}"))
+                if os.path.exists(temporal):
+                    os.remove(temporal)
+                return
+
+        os.replace(temporal, ruta_video)
+        os.remove(ruta_srt)
+        self._cola_msgs.put(("log", "Subtítulos quemados en el video."))
+
+
 class Cancelado(Exception):
     pass
 
@@ -42,7 +235,7 @@ class Cancelado(Exception):
 class SuperYT(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("SuperYT - Descargador de YouTube y Odysee")
+        self.title("SuperYT - Descargador de YouTube y Odysee (by aitchbot)")
         self.geometry("760x600")
         self.minsize(620, 500)
 
@@ -78,6 +271,13 @@ class SuperYT(tk.Tk):
         ttk.Radiobutton(fila_ops, text="Mejor calidad (video + audio)", variable=self.var_modo, value="video").pack(side="left")
         ttk.Radiobutton(fila_ops, text="Solo audio (MP3)", variable=self.var_modo, value="audio").pack(side="left", padx=12)
 
+        fila_formato = ttk.Frame(cont)
+        fila_formato.pack(fill="x", pady=(0, 10))
+        ttk.Label(fila_formato, text="Formato de archivo de video:").pack(side="left")
+        self.var_formato = tk.StringVar(value="mkv")
+        ttk.Radiobutton(fila_formato, text="MKV (recomendado)", variable=self.var_formato, value="mkv").pack(side="left", padx=(6, 0))
+        ttk.Radiobutton(fila_formato, text="MP4", variable=self.var_formato, value="mp4").pack(side="left", padx=12)
+
         fila_listas = ttk.Frame(cont)
         fila_listas.pack(fill="x", pady=(0, 10))
         self.var_elegir = tk.BooleanVar(value=False)
@@ -89,12 +289,11 @@ class SuperYT(tk.Tk):
 
         fila_subs = ttk.Frame(cont)
         fila_subs.pack(fill="x", pady=(0, 10))
-        self.var_subtitulos = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            fila_subs,
-            text="Bajar subtítulos en español si están disponibles (se incrustan en el video)",
-            variable=self.var_subtitulos,
-        ).pack(side="left")
+        ttk.Label(fila_subs, text="Subtítulos en español (si están disponibles):").pack(side="left")
+        self.var_subtitulos = tk.StringVar(value="no")
+        ttk.Radiobutton(fila_subs, text="No bajar", variable=self.var_subtitulos, value="no").pack(side="left", padx=(6, 0))
+        ttk.Radiobutton(fila_subs, text="Como archivo .srt aparte", variable=self.var_subtitulos, value="srt").pack(side="left", padx=12)
+        ttk.Radiobutton(fila_subs, text="Quemados en el video", variable=self.var_subtitulos, value="hardsub").pack(side="left")
 
         fila_btn = ttk.Frame(cont)
         fila_btn.pack(fill="x", pady=(0, 10))
@@ -159,14 +358,14 @@ class SuperYT(tk.Tk):
 
         hilo = threading.Thread(
             target=self._descargar,
-            args=(urls, carpeta, self.var_modo.get(), self.var_elegir.get(), self.var_subtitulos.get()),
+            args=(urls, carpeta, self.var_modo.get(), self.var_formato.get(), self.var_elegir.get(), self.var_subtitulos.get()),
             daemon=True,
         )
         hilo.start()
 
     # ---------- lógica de descarga (corre en hilo aparte) ----------
 
-    def _descargar(self, urls, carpeta, modo, elegir, subtitulos):
+    def _descargar(self, urls, carpeta, modo, formato, elegir, subtitulos):
         def hook(d):
             if self.cancelar:
                 raise Cancelado()
@@ -183,7 +382,12 @@ class SuperYT(tk.Tk):
 
         class Logger:
             def debug(s, msg):
-                if msg.startswith("[download] Destination") or msg.startswith("[Merger]") or msg.startswith("[ExtractAudio]"):
+                prefijos = (
+                    "[download] Destination", "[Merger]", "[ExtractAudio]",
+                    "[VideoRemuxer]", "[EmbedSubtitle]", "[info] There are no subtitles",
+                    "[info] Writing video subtitles", "Embedding subtitles",
+                )
+                if msg.startswith(prefijos):
                     self.cola_msgs.put(("log", ANSI.sub("", msg)))
             def info(s, msg):
                 self.cola_msgs.put(("log", ANSI.sub("", msg)))
@@ -219,13 +423,12 @@ class SuperYT(tk.Tk):
             })
         else:
             opciones["format"] = "bestvideo+bestaudio/best"
-            opciones["postprocessors"] = [{"key": "FFmpegVideoRemuxer", "preferedformat": "mkv"}]
-            if subtitulos:
+            opciones["postprocessors"] = [{"key": "FFmpegVideoRemuxer", "preferedformat": formato}]
+            if subtitulos != "no":
                 opciones["writesubtitles"] = True
                 opciones["writeautomaticsub"] = True
-                opciones["subtitleslangs"] = ["es", "es-419", "es-ES", "es-MX", "es-AR"]
+                opciones["subtitleslangs"] = IDIOMAS_ES + IDIOMAS_EN
                 opciones["subtitlesformat"] = "srt/best"
-                opciones["postprocessors"].append({"key": "FFmpegEmbedSubtitle", "already_have_subtitle": True})
 
         try:
             for i, url in enumerate(urls, 1):
@@ -247,6 +450,8 @@ class SuperYT(tk.Tk):
                             self.cola_msgs.put(("log", f"Seleccionados {len(indices)} de {total} videos."))
 
                 with yt_dlp.YoutubeDL(ops) as ydl:
+                    if subtitulos != "no" and modo != "audio":
+                        ydl.add_post_processor(_TraductorSubtitulosPP(self.cola_msgs, subtitulos), when="post_process")
                     ydl.download([url])
             if self.cancelar:
                 self.cola_msgs.put(("fin", "Descarga cancelada."))
