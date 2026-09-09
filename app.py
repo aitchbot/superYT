@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """SuperYT - Descargador local de videos de YouTube y Odysee (videos individuales o listas)."""
 
+import importlib.metadata
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -20,12 +22,49 @@ import srt as libsrt
 
 CARPETA_DEFECTO = os.path.join(os.path.expanduser("~"), "Downloads", "SuperYT")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
+RE_TOTAL_LISTA = re.compile(r"Downloading (\d+) items\b")  # línea que yt-dlp loguea al arrancar una lista
 IDIOMAS_ES = ["es", "es-419", "es-ES", "es-MX", "es-AR"]
 IDIOMAS_EN = ["en", "en-US", "en-GB", "en-orig"]
 SEPARADOR_LINEA = " ¦ "  # reemplaza saltos de linea internos de un subtitulo al armar el lote a traducir
 
 # Alto maximo (en pixeles) para cada nivel de calidad; None = sin limite (la mejor disponible).
 LIMITE_ALTURA = {"alta": None, "media": 720, "baja": 480}
+
+# Estos dos son los que YouTube puede "romper" de un día para el otro (cambia su protocolo
+# y hacen falta versiones nuevas); se revisan solos al abrir la app para que las descargas
+# no empiecen a fallar con errores como HTTP 403 por quedarse desactualizados.
+PAQUETES_A_ACTUALIZAR = ["yt-dlp", "yt-dlp-ejs"]
+
+
+def _actualizar_paquetes(cola_msgs):
+    """Corre en segundo plano al abrir la app: intenta actualizar PAQUETES_A_ACTUALIZAR
+    a su última versión. Si no hay internet o falla, no hace nada (la app sigue funcionando
+    con lo que ya estaba instalado). Si actualiza algo, avisa en el registro que el cambio
+    queda activo recién la próxima vez que se abra SuperYT (el proceso ya cargó en memoria
+    las versiones viejas)."""
+    try:
+        antes = {p: importlib.metadata.version(p) for p in PAQUETES_A_ACTUALIZAR}
+    except importlib.metadata.PackageNotFoundError:
+        return
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
+             "--timeout", "15", "--upgrade", *PAQUETES_A_ACTUALIZAR],
+            check=True, capture_output=True, text=True, timeout=90,
+        )
+    except Exception:
+        return
+    try:
+        despues = {p: importlib.metadata.version(p) for p in PAQUETES_A_ACTUALIZAR}
+    except importlib.metadata.PackageNotFoundError:
+        return
+    actualizados = [p for p in PAQUETES_A_ACTUALIZAR if antes[p] != despues[p]]
+    if actualizados:
+        detalle = ", ".join(f"{p} {antes[p]} → {despues[p]}" for p in actualizados)
+        cola_msgs.put((
+            "log",
+            f"Se actualizaron dependencias ({detalle}). El cambio queda activo la próxima vez que abras SuperYT.",
+        ))
 
 
 def _detectar_deno():
@@ -248,6 +287,7 @@ class SuperYT(tk.Tk):
 
         self._crear_widgets()
         self.after(100, self._procesar_cola)
+        threading.Thread(target=_actualizar_paquetes, args=(self.cola_msgs,), daemon=True).start()
 
     def _crear_widgets(self):
         cont = ttk.Frame(self, padding=12)
@@ -316,6 +356,9 @@ class SuperYT(tk.Tk):
         self.var_estado = tk.StringVar(value="Listo.")
         ttk.Label(cont, textvariable=self.var_estado).pack(anchor="w")
 
+        self.var_lista = tk.StringVar(value="")
+        ttk.Label(cont, textvariable=self.var_lista).pack(anchor="w")
+
         self.barra = ttk.Progressbar(cont, maximum=100)
         self.barra.pack(fill="x", pady=(4, 10))
 
@@ -377,6 +420,19 @@ class SuperYT(tk.Tk):
     # ---------- lógica de descarga (corre en hilo aparte) ----------
 
     def _descargar(self, urls, carpeta, modo, formato, calidad, elegir, subtitulos):
+        # Conteo de "descargados / faltan" cuando la URL en curso es una lista de reproducción.
+        conteo_lista = {"total": None, "completados": 0}
+
+        def avisar_conteo():
+            self.cola_msgs.put(("lista", conteo_lista["completados"], conteo_lista["total"]))
+
+        def pp_hook(d):
+            # "MoveFiles" es el último postprocesador que corre siempre, en todos los modos,
+            # justo cuando el archivo ya quedó en su ubicación final.
+            if d.get("postprocessor") == "MoveFiles" and d.get("status") == "finished" and conteo_lista["total"] is not None:
+                conteo_lista["completados"] += 1
+                avisar_conteo()
+
         def hook(d):
             if self.cancelar:
                 raise Cancelado()
@@ -393,6 +449,11 @@ class SuperYT(tk.Tk):
 
         class Logger:
             def debug(s, msg):
+                m = RE_TOTAL_LISTA.search(msg)
+                if m:
+                    conteo_lista["total"] = int(m.group(1))
+                    conteo_lista["completados"] = 0
+                    avisar_conteo()
                 prefijos = (
                     "[download] Destination", "[Merger]", "[ExtractAudio]",
                     "[VideoRemuxer]", "[EmbedSubtitle]", "[info] There are no subtitles",
@@ -414,6 +475,7 @@ class SuperYT(tk.Tk):
             "outtmpl": plantilla,
             "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
             "progress_hooks": [hook],
+            "postprocessor_hooks": [pp_hook],
             "logger": Logger(),
             "ignoreerrors": True,      # si un video de la lista falla, sigue con el resto
             "retries": 5,
@@ -449,6 +511,9 @@ class SuperYT(tk.Tk):
             for i, url in enumerate(urls, 1):
                 if self.cancelar:
                     break
+                conteo_lista["total"] = None
+                conteo_lista["completados"] = 0
+                self.cola_msgs.put(("lista", 0, None))
                 self.cola_msgs.put(("log", f"\n▶ ({i}/{len(urls)}) Procesando: {url}"))
 
                 ops = dict(opciones)
@@ -604,6 +669,13 @@ class SuperYT(tk.Tk):
                     self._log(datos[0])
                 elif tipo == "estado":
                     self.var_estado.set(datos[0])
+                elif tipo == "lista":
+                    completados, total = datos
+                    if total is None:
+                        self.var_lista.set("")
+                    else:
+                        restantes = max(total - completados, 0)
+                        self.var_lista.set(f"Lista: {completados} de {total} video(s) descargado(s) ({restantes} restante(s))")
                 elif tipo == "seleccion":
                     self._dialogo_seleccion(*datos)
                 elif tipo == "fin":
